@@ -1,0 +1,297 @@
+"""
+Celery tasks for accounts app
+"""
+from celery import shared_task
+from django.utils import timezone
+from django.core.mail import send_mail
+from django.conf import settings
+from datetime import timedelta
+from .models import User, UserSession, UserVerification, LoyaltyTransaction
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@shared_task
+def cleanup_expired_sessions():
+    """Clean up expired user sessions"""
+    try:
+        # Sessions inactive for more than 30 days
+        cutoff_date = timezone.now() - timedelta(days=30)
+        expired_sessions = UserSession.objects.filter(
+            last_activity__lt=cutoff_date,
+            is_active=True
+        )
+        
+        count = expired_sessions.count()
+        expired_sessions.update(is_active=False, logout_time=timezone.now())
+        
+        logger.info(f"Cleaned up {count} expired user sessions")
+        return f"Cleaned up {count} expired sessions"
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up expired sessions: {e}")
+        return f"Error: {e}"
+
+
+@shared_task
+def cleanup_expired_verifications():
+    """Clean up expired verification tokens"""
+    try:
+        cutoff_date = timezone.now()
+        expired_verifications = UserVerification.objects.filter(
+            expires_at__lt=cutoff_date,
+            is_verified=False
+        )
+        
+        count = expired_verifications.count()
+        expired_verifications.delete()
+        
+        logger.info(f"Cleaned up {count} expired verification tokens")
+        return f"Cleaned up {count} expired verification tokens"
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up expired verifications: {e}")
+        return f"Error: {e}"
+
+
+@shared_task
+def send_otp_email(user_id, otp_code):
+    """Send OTP email to user"""
+    try:
+        user = User.objects.get(id=user_id)
+        
+        subject = 'Smart Lib - Email Verification OTP'
+        message = f'''
+        Dear {user.get_full_name()},
+        
+        Your verification code for Smart Lib is: {otp_code}
+        
+        This code will expire in 5 minutes.
+        
+        Best regards,
+        Smart Lib Team
+        '''
+        
+        html_message = f'''
+        <h2>Email Verification</h2>
+        <p>Dear {user.get_full_name()},</p>
+        <p>Your verification code for Smart Lib is:</p>
+        <div style="background-color: #f5f5f5; padding: 15px; font-size: 24px; font-weight: bold; text-align: center; letter-spacing: 5px; margin: 20px 0;">
+            {otp_code}
+        </div>
+        <p>This code will expire in 5 minutes.</p>
+        <p>Best regards,<br>Smart Lib Team</p>
+        '''
+        
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+        
+        logger.info(f"OTP email sent to {user.email}")
+        return f"OTP email sent to {user.email}"
+        
+    except User.DoesNotExist:
+        logger.error(f"User with ID {user_id} not found")
+        return f"User with ID {user_id} not found"
+    except Exception as e:
+        logger.error(f"Error sending OTP email: {e}")
+        return f"Error: {e}"
+
+
+@shared_task
+def send_welcome_email(user_id):
+    """Send welcome email to new user"""
+    try:
+        user = User.objects.get(id=user_id)
+        
+        subject = 'Welcome to Smart Lib!'
+        message = f'''
+        Dear {user.get_full_name()},
+        
+        Welcome to Smart Lib! Your account has been created successfully.
+        
+        Your Student ID: {user.student_id}
+        Your CRN: {user.crn}
+        
+        Please verify your email address to activate your account.
+        
+        Best regards,
+        Smart Lib Team
+        '''
+        
+        html_message = f'''
+        <h2>Welcome to Smart Lib!</h2>
+        <p>Dear {user.get_full_name()},</p>
+        <p>Welcome to Smart Lib! Your account has been created successfully.</p>
+        <ul>
+            <li><strong>Student ID:</strong> {user.student_id}</li>
+            <li><strong>CRN:</strong> {user.crn}</li>
+        </ul>
+        <p>Please verify your email address to activate your account.</p>
+        <p>Best regards,<br>Smart Lib Team</p>
+        '''
+        
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+        
+        logger.info(f"Welcome email sent to {user.email}")
+        return f"Welcome email sent to {user.email}"
+        
+    except User.DoesNotExist:
+        logger.error(f"User with ID {user_id} not found")
+        return f"User with ID {user_id} not found"
+    except Exception as e:
+        logger.error(f"Error sending welcome email: {e}")
+        return f"Error: {e}"
+
+
+@shared_task
+def send_approval_notification(user_id):
+    """Send approval notification to user"""
+    try:
+        user = User.objects.get(id=user_id)
+        
+        subject = 'Smart Lib - Account Approved!'
+        message = f'''
+        Dear {user.get_full_name()},
+        
+        Great news! Your Smart Lib account has been approved.
+        
+        You can now log in and start using all the features:
+        - Book library seats
+        - Reserve books
+        - Register for events
+        - Earn loyalty points
+        
+        Login at: {settings.FRONTEND_URL}/login
+        
+        Best regards,
+        Smart Lib Team
+        '''
+        
+        html_message = f'''
+        <h2>Account Approved!</h2>
+        <p>Dear {user.get_full_name()},</p>
+        <p>Great news! Your Smart Lib account has been approved.</p>
+        <p>You can now log in and start using all the features:</p>
+        <ul>
+            <li>Book library seats</li>
+            <li>Reserve books</li>
+            <li>Register for events</li>
+            <li>Earn loyalty points</li>
+        </ul>
+        <p><a href="{settings.FRONTEND_URL}/login" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Login Now</a></p>
+        <p>Best regards,<br>Smart Lib Team</p>
+        '''
+        
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+        
+        logger.info(f"Approval notification sent to {user.email}")
+        return f"Approval notification sent to {user.email}"
+        
+    except User.DoesNotExist:
+        logger.error(f"User with ID {user_id} not found")
+        return f"User with ID {user_id} not found"
+    except Exception as e:
+        logger.error(f"Error sending approval notification: {e}")
+        return f"Error: {e}"
+
+
+@shared_task
+def process_loyalty_points_expiry():
+    """Process expired loyalty points"""
+    try:
+        # Points expire after 1 year
+        cutoff_date = timezone.now() - timedelta(days=365)
+        
+        # Find transactions older than 1 year that haven't been processed for expiry
+        old_transactions = LoyaltyTransaction.objects.filter(
+            created_at__lt=cutoff_date,
+            transaction_type='EARNED'
+        ).values('user').distinct()
+        
+        expired_count = 0
+        for transaction_data in old_transactions:
+            user_id = transaction_data['user']
+            try:
+                user = User.objects.get(id=user_id)
+                profile = user.profile
+                
+                # Calculate expired points
+                expired_points = LoyaltyTransaction.objects.filter(
+                    user=user,
+                    created_at__lt=cutoff_date,
+                    transaction_type='EARNED'
+                ).aggregate(total=models.Sum('points'))['total'] or 0
+                
+                if expired_points > 0:
+                    # Deduct expired points
+                    profile.loyalty_points = max(0, profile.loyalty_points - expired_points)
+                    profile.save()
+                    
+                    # Create expiry transaction
+                    LoyaltyTransaction.objects.create(
+                        user=user,
+                        points=expired_points,
+                        transaction_type='EXPIRED',
+                        description=f'Points expired after 1 year',
+                        created_by=user
+                    )
+                    
+                    expired_count += 1
+                    
+            except User.DoesNotExist:
+                continue
+        
+        logger.info(f"Processed loyalty points expiry for {expired_count} users")
+        return f"Processed loyalty points expiry for {expired_count} users"
+        
+    except Exception as e:
+        logger.error(f"Error processing loyalty points expiry: {e}")
+        return f"Error: {e}"
+
+
+@shared_task
+def generate_user_statistics():
+    """Generate daily user statistics"""
+    try:
+        from django.db.models import Count, Q
+        
+        today = timezone.now().date()
+        
+        stats = {
+            'total_users': User.objects.count(),
+            'active_users': User.objects.filter(is_active=True).count(),
+            'approved_users': User.objects.filter(is_approved=True).count(),
+            'pending_approval': User.objects.filter(is_approved=False, is_active=True).count(),
+            'students': User.objects.filter(role='STUDENT').count(),
+            'admins': User.objects.filter(role__in=['ADMIN', 'SUPER_ADMIN']).count(),
+            'new_registrations_today': User.objects.filter(created_at__date=today).count(),
+            'active_sessions': UserSession.objects.filter(is_active=True).count(),
+        }
+        
+        logger.info(f"User statistics generated: {stats}")
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error generating user statistics: {e}")
+        return f"Error: {e}"

@@ -76,7 +76,7 @@ class UserRegistrationView(generics.CreateAPIView):
         
         return Response({
             'message': 'Registration successful. Please check your email to verify your account.',
-            'user_id': user.id
+            'user_id': str(user.id)
         }, status=status.HTTP_201_CREATED)
 
 
@@ -90,7 +90,7 @@ def login_view(request):
         serializer.is_valid(raise_exception=True)
     except serializers.ValidationError as e:
         # Check if this is the special 'account_not_active' error
-        if e.get_codes() == {'non_field_errors': ['account_not_active']}:
+        if hasattr(e, 'get_codes') and e.get_codes() == {'non_field_errors': ['account_not_active']}:
             # Get the user by email
             try:
                 user = User.objects.get(email=request.data.get('email'))
@@ -180,7 +180,7 @@ def login_view(request):
         'access_token': str(access_token),
         'refresh_token': str(refresh),
         'user': UserSerializer(user).data,
-        'session_id': session.id
+        'session_id': str(session.id)
     })
 
 

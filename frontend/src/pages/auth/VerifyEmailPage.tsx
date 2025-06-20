@@ -1,330 +1,216 @@
-import { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
-import {
-  Box,
-  Typography,
-  Button,
-  Alert,
-  Paper,
-  TextField,
-  InputAdornment,
-  CircularProgress,
-  Grid,
-} from '@mui/material'
-import { CheckCircle, Error as ErrorIcon, Email, ArrowBack } from '@mui/icons-material'
-import { motion } from 'framer-motion'
-import { authService } from '../../services/authService'
-import { useToast } from '../../hooks/use-toast'
+import React, { useState, useEffect } from 'react';
+import { useForm, SubmitHandler } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { useToast } from '@/components/ui/use-toast';
+import { Loader2, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { api } from '@/lib/api';
 
-export function VerifyEmailPage() {
-  const { token } = useParams<{ token: string }>()
-  const [searchParams] = useSearchParams()
-  const navigate = useNavigate()
-  const { toast } = useToast()
-  
-  const [isLoading, setIsLoading] = useState(false)
-  const [isVerified, setIsVerified] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [email, setEmail] = useState<string>('')
-  const [isResending, setIsResending] = useState(false)
-  const [otp, setOtp] = useState<string>('')
-  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false)
-  
-  // Check if we're in success or failure mode from URL path
-  const isSuccess = window.location.pathname.includes('/success')
-  const isFailure = window.location.pathname.includes('/failed')
-  const failureReason = searchParams.get('reason')
+// Define the form schema with Zod
+const verifySchema = z.object({
+  email: z.string().email('Please enter a valid email address'),
+  otp: z.string().length(6, 'OTP must be 6 digits'),
+});
 
+type VerifyFormValues = z.infer<typeof verifySchema>;
+
+const VerifyEmailPage: React.FC = () => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [verificationStatus, setVerificationStatus] = useState<'pending' | 'success' | 'failed' | 'processing'>('pending');
+  const [statusMessage, setStatusMessage] = useState('');
+  const { toast } = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const params = useParams();
+  const token = params.token;
+  
+  const { register, handleSubmit, setValue, formState: { errors } } = useForm<VerifyFormValues>({
+    resolver: zodResolver(verifySchema),
+  });
+
+  // Set email from location state if available
   useEffect(() => {
-    // If we're in success or failure mode, set the appropriate state
-    if (isSuccess) {
-      setIsVerified(true)
-      setError(null)
-      setIsLoading(false)
-    } else if (isFailure) {
-      setIsVerified(false)
-      setError(
-        failureReason === 'expired' 
-          ? 'Your verification link has expired. Please request a new one.'
-          : 'Invalid verification link. Please request a new one.'
-      )
-      setIsLoading(false)
+    const email = location.state?.email;
+    if (email) {
+      setValue('email', email);
     }
-    // If we have a token in the URL, verify it
-    else if (token) {
-      verifyEmail()
-    } 
-    // Otherwise, we're in manual verification mode
-    else {
-      setIsLoading(false)
+    
+    // Check URL parameters for success/failure status
+    const searchParams = new URLSearchParams(location.search);
+    const reason = searchParams.get('reason');
+    
+    if (location.pathname.includes('/success')) {
+      setVerificationStatus('success');
+      setStatusMessage('Your email has been successfully verified! You can now log in to your account.');
+    } else if (location.pathname.includes('/failed')) {
+      setVerificationStatus('failed');
+      setStatusMessage(reason === 'expired' 
+        ? 'Your verification link has expired. Please request a new one below.'
+        : 'Invalid verification link. Please try again or request a new verification code.');
     }
-  }, [token, isSuccess, isFailure, failureReason])
+  }, [location, setValue]);
 
-  const verifyEmail = async () => {
+  // Handle direct verification via token in URL
+  useEffect(() => {
+    if (token && verificationStatus === 'pending') {
+      setVerificationStatus('processing');
+      // The backend handles the verification and redirects to success/failed
+    }
+  }, [token, verificationStatus]);
+
+  const onSubmit: SubmitHandler<VerifyFormValues> = async (data) => {
+    setIsSubmitting(true);
     try {
-      setIsLoading(true)
-      const response = await authService.verifyEmail(token!)
-      setIsVerified(true)
-      setError(null)
-      
+      const response = await api.post('/auth/verify-otp/', data);
+      setVerificationStatus('success');
+      setStatusMessage('Your email has been successfully verified! You can now log in to your account.');
       toast({
-        title: "Email Verified",
-        description: "Your email has been verified successfully.",
-        variant: "default",
-      })
+        title: "Email verified!",
+        description: "Your account has been activated successfully.",
+        variant: "success",
+      });
+      
+      // Redirect to login after a short delay
+      setTimeout(() => {
+        navigate('/auth/login');
+      }, 3000);
     } catch (error: any) {
-      setError(error.message || 'Failed to verify email. The token may be invalid or expired.')
-      setIsVerified(false)
-      
+      console.error('Verification error:', error);
       toast({
-        title: "Verification Failed",
-        description: error.message || 'Failed to verify email',
+        title: "Verification failed",
+        description: error.response?.data?.message || "Invalid verification code. Please try again.",
         variant: "destructive",
-      })
+      });
     } finally {
-      setIsLoading(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
-  const handleResendVerification = async () => {
+  const handleResendCode = async () => {
+    const email = location.state?.email || '';
     if (!email) {
       toast({
-        title: "Email Required",
-        description: "Please enter your email address",
-        variant: "destructive",
-      })
-      return
+        title: "Email required",
+        description: "Please enter your email address to resend the verification code.",
+        variant: "warning",
+      });
+      return;
     }
     
+    setIsSubmitting(true);
     try {
-      setIsResending(true)
-      const response = await authService.sendOtp(email)
-      
+      await api.post('/auth/send-otp/', { email });
       toast({
-        title: "Verification Email Sent",
-        description: "A new verification code has been sent to your email",
-        variant: "default",
-      })
-      
-      // Show OTP input field after sending
-      setError(null)
+        title: "Verification email sent",
+        description: "Please check your inbox for the verification link and code.",
+        variant: "success",
+      });
     } catch (error: any) {
+      console.error('Resend verification error:', error);
       toast({
-        title: "Failed to Send Verification",
-        description: error.message || 'Failed to send verification email',
+        title: "Failed to resend verification",
+        description: error.response?.data?.message || "An error occurred. Please try again.",
         variant: "destructive",
-      })
+      });
     } finally {
-      setIsResending(false)
+      setIsSubmitting(false);
     }
-  }
-
-  const handleVerifyOtp = async () => {
-    if (!email || !otp) {
-      toast({
-        title: "Information Required",
-        description: "Please enter both email and verification code",
-        variant: "destructive",
-      })
-      return
-    }
-    
-    try {
-      setIsVerifyingOtp(true)
-      const response = await authService.verifyOtp(email, otp)
-      
-      setIsVerified(true)
-      setError(null)
-      
-      toast({
-        title: "Email Verified",
-        description: "Your email has been verified successfully.",
-        variant: "default",
-      })
-      
-      // Redirect to login page with a message
-      setTimeout(() => {
-        navigate('/auth/login', { 
-          state: { 
-            message: 'Email verification successful! You can now log in.' 
-          } 
-        })
-      }, 2000)
-    } catch (error: any) {
-      toast({
-        title: "Verification Failed",
-        description: error.message || 'Failed to verify email',
-        variant: "destructive",
-      })
-    } finally {
-      setIsVerifyingOtp(false)
-    }
-  }
-
-  // Determine what to render based on the current state
-  const renderContent = () => {
-    // Loading state
-    if (isLoading) {
-      return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mt: 4 }}>
-          <CircularProgress size={60} thickness={4} />
-          <Typography variant="body1" sx={{ mt: 2 }}>
-            Verifying your email address...
-          </Typography>
-        </Box>
-      )
-    }
-    
-    // Success state
-    if (isVerified) {
-      return (
-        <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ duration: 0.5 }}
-        >
-          <Box sx={{ mt: 4, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <CheckCircle color="success" sx={{ fontSize: 80, mb: 2 }} />
-            <Typography variant="h5" gutterBottom>
-              Email Verified Successfully!
-            </Typography>
-            <Typography variant="body1" color="text.secondary" paragraph>
-              Your email has been verified. You can now log in to your account.
-            </Typography>
-            <Button
-              variant="contained"
-              size="large"
-              onClick={() => navigate('/auth/login')}
-              sx={{ mt: 2 }}
-            >
-              Go to Login
-            </Button>
-          </Box>
-        </motion.div>
-      )
-    }
-    
-    // Error/Manual verification state
-    return (
-      <motion.div
-        initial={{ scale: 0.8, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.5 }}
-      >
-        <Box sx={{ mt: 4, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          {error && (
-            <>
-              <ErrorIcon color="error" sx={{ fontSize: 80, mb: 2 }} />
-              <Typography variant="h5" gutterBottom>
-                Verification Failed
-              </Typography>
-              <Alert severity="error" sx={{ mb: 3 }}>
-                {error}
-              </Alert>
-            </>
-          )}
-          
-          <Typography variant="body1" paragraph>
-            {error 
-              ? 'Please try again or request a new verification email.'
-              : 'Enter your email and verification code to verify your account.'}
-          </Typography>
-          
-          <Paper elevation={3} sx={{ p: 3, width: '100%', maxWidth: 400, mt: 2 }}>
-            <Typography variant="h6" gutterBottom>
-              {error ? 'Request New Verification' : 'Verify Your Email'}
-            </Typography>
-            <TextField
-              fullWidth
-              label="Email Address"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              margin="normal"
-              required
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Email color="action" />
-                  </InputAdornment>
-                ),
-              }}
-            />
-            
-            {otp ? (
-              <TextField
-                fullWidth
-                label="Verification Code"
-                value={otp}
-                onChange={(e) => setOtp(e.target.value)}
-                margin="normal"
-                required
-                placeholder="Enter 6-digit code"
-              />
-            ) : null}
-            
-            <Grid container spacing={2} sx={{ mt: 2 }}>
-              <Grid item xs={12} sm={6}>
-                <Button
-                  variant="outlined"
-                  fullWidth
-                  onClick={() => navigate('/auth/login')}
-                  startIcon={<ArrowBack />}
-                >
-                  Back to Login
-                </Button>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                {otp ? (
-                  <Button
-                    variant="contained"
-                    fullWidth
-                    onClick={handleVerifyOtp}
-                    disabled={isVerifyingOtp || !email || otp.length !== 6}
-                  >
-                    {isVerifyingOtp ? <CircularProgress size={24} /> : 'Verify Code'}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="contained"
-                    fullWidth
-                    onClick={handleResendVerification}
-                    disabled={isResending || !email}
-                  >
-                    {isResending ? <CircularProgress size={24} /> : 'Send Verification'}
-                  </Button>
-                )}
-              </Grid>
-            </Grid>
-            
-            {otp && (
-              <Button
-                variant="text"
-                onClick={() => setOtp('')}
-                sx={{ mt: 1 }}
-              >
-                Back to Email Entry
-              </Button>
-            )}
-          </Paper>
-        </Box>
-      </motion.div>
-    )
-  }
+  };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-    >
-      <Box sx={{ textAlign: 'center' }}>
-        <Typography variant="h4" component="h1" gutterBottom>
-          Email Verification
-        </Typography>
+    <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Email Verification</CardTitle>
+          <CardDescription>
+            {verificationStatus === 'pending' && 'Verify your email address to activate your account'}
+            {verificationStatus === 'processing' && 'Processing your verification...'}
+          </CardDescription>
+        </CardHeader>
+        
+        <CardContent className="space-y-4">
+          {verificationStatus === 'processing' && (
+            <div className="flex flex-col items-center justify-center py-8">
+              <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+              <p className="text-center">Verifying your email address...</p>
+            </div>
+          )}
+          
+          {verificationStatus === 'success' && (
+            <Alert variant="success" className="mb-4">
+              <CheckCircle className="h-4 w-4" />
+              <AlertTitle>Success!</AlertTitle>
+              <AlertDescription>{statusMessage}</AlertDescription>
+            </Alert>
+          )}
+          
+          {verificationStatus === 'failed' && (
+            <Alert variant="destructive" className="mb-4">
+              <XCircle className="h-4 w-4" />
+              <AlertTitle>Verification Failed</AlertTitle>
+              <AlertDescription>{statusMessage}</AlertDescription>
+            </Alert>
+          )}
+          
+          {(verificationStatus === 'pending' || verificationStatus === 'failed') && (
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input id="email" type="email" {...register('email')} />
+                {errors.email && <p className="text-sm text-red-500">{errors.email.message}</p>}
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="otp">Verification Code</Label>
+                <Input id="otp" {...register('otp')} placeholder="Enter 6-digit code" />
+                {errors.otp && <p className="text-sm text-red-500">{errors.otp.message}</p>}
+              </div>
+              
+              <Alert variant="info">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Verification Instructions</AlertTitle>
+                <AlertDescription>
+                  Please enter the 6-digit verification code sent to your email address. 
+                  If you haven't received the code, check your spam folder or click the resend button below.
+                </AlertDescription>
+              </Alert>
+              
+              <div className="flex justify-between">
+                <Button type="button" variant="outline" onClick={handleResendCode} disabled={isSubmitting}>
+                  {isSubmitting ? 'Sending...' : 'Resend Code'}
+                </Button>
+                
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Verifying...
+                    </>
+                  ) : (
+                    'Verify Email'
+                  )}
+                </Button>
+              </div>
+            </form>
+          )}
+        </CardContent>
+        
+        <CardFooter className="flex justify-center">
+          {(verificationStatus === 'success' || verificationStatus === 'failed') && (
+            <Button variant="link" onClick={() => navigate('/auth/login')}>
+              Return to Login
+            </Button>
+          )}
+        </CardFooter>
+      </Card>
+    </div>
+  );
+};
 
-        {renderContent()}
-      </Box>
-    </motion.div>
-  )
-}
+export default VerifyEmailPage;

@@ -164,10 +164,10 @@ class VerifyOtpSerializer(serializers.Serializer):
                 )
                 
                 if verification.is_expired():
-                    raise serializers.ValidationError('Verification code has expired. Please request a new one.')
+                    raise serializers.ValidationError("Verification code has expired. Please request a new one.")
                 
                 if not verification.can_attempt():
-                    raise serializers.ValidationError('Maximum verification attempts exceeded. Please request a new code.')
+                    raise serializers.ValidationError("Maximum verification attempts exceeded. Please request a new code.")
                 
                 self.context['user'] = user
                 self.context['verification'] = verification
@@ -185,14 +185,14 @@ class VerifyOtpSerializer(serializers.Serializer):
                     existing_verification.save()
                     
                     if not existing_verification.can_attempt():
-                        raise serializers.ValidationError('Maximum verification attempts exceeded. Please request a new code.')
+                        raise serializers.ValidationError("Maximum verification attempts exceeded. Please request a new code.")
                 except UserVerification.DoesNotExist:
                     pass
                 
-                raise serializers.ValidationError('Invalid verification code. Please try again.')
+                raise serializers.ValidationError("Invalid verification code. Please try again.")
                 
         except User.DoesNotExist:
-            raise serializers.ValidationError('No account found with this email')
+            raise serializers.ValidationError("No account found with this email")
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -308,7 +308,9 @@ class UserLibraryAccessSerializer(BaseModelSerializer):
     """Serializer for user library access"""
     user_display = serializers.CharField(source='user.get_full_name', read_only=True)
     library_display = serializers.CharField(source='library.name', read_only=True)
-    granted_by_display = serializers.CharField(source='granted_by.full_name', read_only=True)
+    granted_by_display = serializers.CharField(
+        source='granted_by.full_name', read_only=True
+    )
     access_type_display = serializers.CharField(
         source='get_access_type_display', read_only=True
     )

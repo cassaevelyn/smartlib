@@ -1,265 +1,165 @@
-import { useState } from 'react'
-import { Link, useNavigate, useLocation } from 'react-router-dom'
-import {
-  Box,
-  TextField,
-  Button,
-  Typography,
-  Alert,
-  InputAdornment,
-  IconButton,
-  FormControlLabel,
-  Checkbox,
-  Divider,
-} from '@mui/material'
-import { Visibility, VisibilityOff, Email, Lock } from '@mui/icons-material'
-import { motion } from 'framer-motion'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { useAuthStore } from '../../stores/authStore'
-import { LoadingSpinner } from '../../components/ui/loading-spinner'
-import { useToast } from '../../hooks/use-toast'
-import { authService } from '../../services/authService'
+import React, { useState } from 'react';
+import { useForm, SubmitHandler } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Link, useNavigate } from 'react-router-dom';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { useToast } from '@/components/ui/use-toast';
+import { Loader2, AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { api } from '@/lib/api';
+import { useAuth } from '@/hooks/useAuth';
 
+// Define the form schema with Zod
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
   password: z.string().min(1, 'Password is required'),
-  rememberMe: z.boolean().optional(),
-})
+});
 
-type LoginForm = z.infer<typeof loginSchema>
+type LoginFormValues = z.infer<typeof loginSchema>;
 
-export function LoginPage() {
-  const navigate = useNavigate()
-  const location = useLocation()
-  const { toast } = useToast()
-  const { login, isLoading, error, clearError } = useAuthStore()
-  const [showPassword, setShowPassword] = useState(false)
-  const [verificationSent, setVerificationSent] = useState(false)
-
-  const from = location.state?.from?.pathname || '/'
-
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-    getValues,
-  } = useForm<LoginForm>({
+const LoginPage: React.FC = () => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [unverifiedAccount, setUnverifiedAccount] = useState<string | null>(null);
+  const [resendingEmail, setResendingEmail] = useState(false);
+  const { toast } = useToast();
+  const navigate = useNavigate();
+  const { login } = useAuth();
+  
+  const { register, handleSubmit, formState: { errors } } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
-    defaultValues: {
-      email: '',
-      password: '',
-      rememberMe: false,
-    },
-  })
+  });
 
-  const onSubmit = async (data: LoginForm) => {
+  const onSubmit: SubmitHandler<LoginFormValues> = async (data) => {
+    setIsSubmitting(true);
     try {
-      clearError()
-      
-      await login({ email: data.email, password: data.password })
-      
+      const response = await api.post('/auth/login/', data);
+      login(response.data);
       toast({
-        title: "Login Successful",
-        description: "Welcome back to Smart Lib!",
-        variant: "default",
-      })
-      
-      navigate(from, { replace: true })
+        title: "Login successful!",
+        description: "Welcome back to Smart Lib.",
+        variant: "success",
+      });
+      navigate('/dashboard');
     } catch (error: any) {
-      // Check if this is the special 'account_not_active' error
-      if (error.code === 'account_not_active') {
-        setVerificationSent(true)
+      console.error('Login error:', error);
+      
+      // Check for unverified account error
+      if (error.response?.data?.code === 'account_not_active') {
+        setUnverifiedAccount(data.email);
         toast({
-          title: "Account Not Verified",
-          description: "A verification email has been sent to your address. Please verify your email to continue.",
+          title: "Account not verified",
+          description: "Your account is not active. Please verify your email.",
           variant: "warning",
-        })
+        });
       } else {
         toast({
-          title: "Login Failed",
-          description: error.message || "Invalid credentials. Please try again.",
+          title: "Login failed",
+          description: error.response?.data?.message || "Invalid credentials. Please try again.",
           variant: "destructive",
-        })
+        });
       }
+    } finally {
+      setIsSubmitting(false);
     }
-  }
+  };
 
   const handleResendVerification = async () => {
-    const email = getValues('email')
-    if (!email) {
-      toast({
-        title: "Email Required",
-        description: "Please enter your email address to resend verification",
-        variant: "destructive",
-      })
-      return
-    }
+    if (!unverifiedAccount) return;
     
+    setResendingEmail(true);
     try {
-      await authService.sendOtp(email)
-      
+      await api.post('/auth/send-otp/', { email: unverifiedAccount });
       toast({
-        title: "Verification Email Sent",
-        description: "A new verification email has been sent to your address",
-        variant: "default",
-      })
-      
-      setVerificationSent(true)
+        title: "Verification email sent",
+        description: "Please check your inbox for the verification link.",
+        variant: "success",
+      });
+      navigate('/auth/verify-email', { state: { email: unverifiedAccount } });
     } catch (error: any) {
+      console.error('Resend verification error:', error);
       toast({
-        title: "Failed to Send Verification",
-        description: error.message || "Failed to send verification email",
+        title: "Failed to resend verification",
+        description: error.response?.data?.message || "An error occurred. Please try again.",
         variant: "destructive",
-      })
+      });
+    } finally {
+      setResendingEmail(false);
     }
-  }
+  };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-    >
-      <Box component="form" onSubmit={handleSubmit(onSubmit)} noValidate>
-        <Typography variant="h4" component="h1" gutterBottom textAlign="center">
-          Welcome Back
-        </Typography>
-        <Typography variant="body1" color="text.secondary" textAlign="center" sx={{ mb: 3 }}>
-          Sign in to your Smart Lib account
-        </Typography>
-
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {error}
-          </Alert>
-        )}
-
-        {location.state?.message && (
-          <Alert severity="success" sx={{ mb: 3 }}>
-            {location.state.message}
+    <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Login to Smart Lib</CardTitle>
+          <CardDescription>Enter your credentials to access your account</CardDescription>
+        </CardHeader>
+        
+        {unverifiedAccount && (
+          <Alert className="mx-6 mb-2" variant="warning">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Account not verified</AlertTitle>
+            <AlertDescription>
+              Your account needs to be verified before you can log in.
+              <Button 
+                variant="link" 
+                className="p-0 h-auto font-semibold ml-1"
+                onClick={handleResendVerification}
+                disabled={resendingEmail}
+              >
+                {resendingEmail ? 'Sending...' : 'Resend verification email'}
+              </Button>
+            </AlertDescription>
           </Alert>
         )}
         
-        {verificationSent && (
-          <Alert severity="warning" sx={{ mb: 3 }}>
-            Your account needs to be verified. A verification email has been sent to your address.
-            <Button 
-              size="small" 
-              onClick={() => navigate('/auth/verify-email/manual')}
-              sx={{ ml: 1 }}
-            >
-              Enter Verification Code
+        <form onSubmit={handleSubmit(onSubmit)}>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input id="email" type="email" {...register('email')} />
+              {errors.email && <p className="text-sm text-red-500">{errors.email.message}</p>}
+            </div>
+            
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <Link to="/auth/forgot-password" className="text-sm text-blue-600 hover:underline">
+                  Forgot password?
+                </Link>
+              </div>
+              <Input id="password" type="password" {...register('password')} />
+              {errors.password && <p className="text-sm text-red-500">{errors.password.message}</p>}
+            </div>
+          </CardContent>
+          
+          <CardFooter className="flex flex-col space-y-4">
+            <Button type="submit" className="w-full" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Logging in...
+                </>
+              ) : (
+                'Login'
+              )}
             </Button>
-          </Alert>
-        )}
+            
+            <p className="text-sm text-center">
+              Don't have an account?{' '}
+              <Link to="/auth/register" className="text-blue-600 hover:underline">
+                Register
+              </Link>
+            </p>
+          </CardFooter>
+        </form>
+      </Card>
+    </div>
+  );
+};
 
-        <TextField
-          {...register('email')}
-          fullWidth
-          label="Email Address"
-          type="email"
-          autoComplete="email"
-          autoFocus
-          error={!!errors.email}
-          helperText={errors.email?.message}
-          sx={{ mb: 2 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Email color="action" />
-              </InputAdornment>
-            ),
-          }}
-        />
-
-        <TextField
-          {...register('password')}
-          fullWidth
-          label="Password"
-          type={showPassword ? 'text' : 'password'}
-          autoComplete="current-password"
-          error={!!errors.password}
-          helperText={errors.password?.message}
-          sx={{ mb: 2 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Lock color="action" />
-              </InputAdornment>
-            ),
-            endAdornment: (
-              <InputAdornment position="end">
-                <IconButton
-                  aria-label="toggle password visibility"
-                  onClick={() => setShowPassword(!showPassword)}
-                  edge="end"
-                >
-                  {showPassword ? <VisibilityOff /> : <Visibility />}
-                </IconButton>
-              </InputAdornment>
-            ),
-          }}
-        />
-
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-          <FormControlLabel
-            control={<Checkbox {...register('rememberMe')} />}
-            label="Remember me"
-          />
-          <Link
-            to="/auth/forgot-password"
-            style={{ textDecoration: 'none', color: 'inherit' }}
-          >
-            <Typography variant="body2" color="primary">
-              Forgot password?
-            </Typography>
-          </Link>
-        </Box>
-
-        <Button
-          type="submit"
-          fullWidth
-          variant="contained"
-          size="large"
-          disabled={isLoading}
-          sx={{ mb: 2, py: 1.5 }}
-        >
-          {isLoading ? <LoadingSpinner size="sm" /> : 'Sign In'}
-        </Button>
-        
-        {verificationSent && (
-          <Button
-            fullWidth
-            variant="outlined"
-            onClick={handleResendVerification}
-            sx={{ mb: 2 }}
-          >
-            Resend Verification Email
-          </Button>
-        )}
-
-        <Divider sx={{ my: 2 }}>
-          <Typography variant="body2" color="text.secondary">
-            OR
-          </Typography>
-        </Divider>
-
-        <Box sx={{ textAlign: 'center' }}>
-          <Typography variant="body2" color="text.secondary">
-            Don't have an account?{' '}
-            <Link
-              to="/auth/register"
-              style={{ textDecoration: 'none', color: 'inherit' }}
-            >
-              <Typography component="span" color="primary" sx={{ font: 'inherit' }}>
-                Sign up
-              </Typography>
-            </Link>
-          </Typography>
-        </Box>
-      </Box>
-    </motion.div>
-  )
-}
+export default LoginPage;

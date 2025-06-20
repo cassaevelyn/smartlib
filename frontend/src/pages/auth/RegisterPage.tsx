@@ -1,470 +1,239 @@
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import {
-  Box,
-  TextField,
-  Button,
-  Typography,
-  Alert,
-  InputAdornment,
-  IconButton,
-  Grid,
-  MenuItem,
-  Stepper,
-  Step,
-  StepLabel,
-} from '@mui/material'
-import {
-  Visibility,
-  VisibilityOff,
-  Email,
-  Person,
-  Badge,
-  Phone,
-  Home,
-  LocationCity,
-  Cake,
-  LockOutlined,
-} from '@mui/icons-material'
-import { motion } from 'framer-motion'
-import { useForm, Controller } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { useAuthStore } from '../../stores/authStore'
-import { authService } from '../../services/authService'
-import { LoadingSpinner } from '../../components/ui/loading-spinner'
-import { isValidCRN } from '../../lib/utils'
-import { useToast } from '../../hooks/use-toast'
+import React, { useState } from 'react';
+import { useForm, SubmitHandler } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { useNavigate } from 'react-router-dom';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useToast } from '@/components/ui/use-toast';
+import { Stepper, Step } from '@/components/ui/stepper';
+import { api } from '@/lib/api';
+import { Loader2 } from 'lucide-react';
 
+// Define the form schema with Zod
 const registerSchema = z.object({
+  // Account Information
   username: z.string().min(3, 'Username must be at least 3 characters'),
   email: z.string().email('Please enter a valid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   password_confirm: z.string(),
-  first_name: z.string().min(1, 'First name is required'),
-  last_name: z.string().min(1, 'Last name is required'),
-  crn: z.string().refine(isValidCRN, {
-    message: 'CRN must be in format ICAP-CA-YYYY-####',
-  }),
+  
+  // Personal Details
+  first_name: z.string().min(2, 'First name must be at least 2 characters'),
+  last_name: z.string().min(2, 'Last name must be at least 2 characters'),
   phone_number: z.string().optional(),
   date_of_birth: z.string().optional(),
   gender: z.enum(['M', 'F', 'O']).optional(),
   address: z.string().optional(),
   city: z.string().optional(),
-}).refine((data) => data.password === data.password_confirm, {
+  
+  // ICAP Information
+  crn: z.string().regex(/^ICAP-CA-\d{4}-\d{4}$/, 'CRN must be in format ICAP-CA-YYYY-NNNN'),
+}).refine(data => data.password === data.password_confirm, {
   message: "Passwords don't match",
-  path: ['password_confirm'],
-})
+  path: ["password_confirm"],
+});
 
-type RegisterForm = z.infer<typeof registerSchema>
+type RegisterFormValues = z.infer<typeof registerSchema>;
 
-const steps = ['Account Information', 'Personal Details', 'ICAP Information']
-
-export function RegisterPage() {
-  const navigate = useNavigate()
-  const { toast } = useToast()
-  const { register: registerUser, isLoading, error, clearError } = useAuthStore()
-  const [showPassword, setShowPassword] = useState(false)
-  const [activeStep, setActiveStep] = useState(0)
-
-  const {
-    register,
-    control,
-    handleSubmit,
-    watch,
-    trigger,
-    formState: { errors, isValid },
-    reset,
-  } = useForm<RegisterForm>({
+const RegisterPage: React.FC = () => {
+  const [activeStep, setActiveStep] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { toast } = useToast();
+  const navigate = useNavigate();
+  
+  const { register, handleSubmit, formState: { errors }, trigger, getValues } = useForm<RegisterFormValues>({
     resolver: zodResolver(registerSchema),
     mode: 'onChange',
-    defaultValues: {
-      username: '',
-      email: '',
-      password: '',
-      password_confirm: '',
-      first_name: '',
-      last_name: '',
-      crn: '',
-      phone_number: '',
-      date_of_birth: '',
-      gender: 'M',
-      address: '',
-      city: '',
-    },
-  })
+  });
 
-  const watchEmail = watch('email')
+  const steps = [
+    { title: 'Account Information', fields: ['username', 'email', 'password', 'password_confirm'] },
+    { title: 'Personal Details', fields: ['first_name', 'last_name', 'phone_number', 'date_of_birth', 'gender', 'address', 'city'] },
+    { title: 'ICAP Information', fields: ['crn'] },
+  ];
 
   const handleNext = async () => {
-    let fieldsToValidate: (keyof RegisterForm)[] = []
+    const currentStepFields = steps[activeStep].fields;
+    const isValid = await trigger(currentStepFields as any);
     
-    if (activeStep === 0) {
-      fieldsToValidate = ['username', 'email', 'password', 'password_confirm']
-    } else if (activeStep === 1) {
-      fieldsToValidate = ['first_name', 'last_name', 'phone_number', 'date_of_birth', 'gender']
+    if (isValid) {
+      setActiveStep(prev => prev + 1);
     }
-    
-    const isStepValid = await trigger(fieldsToValidate)
-    
-    if (isStepValid) {
-      setActiveStep((prevStep) => prevStep + 1)
-    }
-  }
+  };
 
   const handleBack = () => {
-    setActiveStep((prevStep) => prevStep - 1)
-  }
+    setActiveStep(prev => prev - 1);
+  };
 
-  const onSubmit = async (data: RegisterForm) => {
+  const onSubmit: SubmitHandler<RegisterFormValues> = async (data) => {
+    setIsSubmitting(true);
     try {
-      clearError()
-      
-      await registerUser(data)
-      
+      const response = await api.post('/auth/register/', data);
       toast({
-        title: "Registration Successful",
+        title: "Registration successful!",
         description: "Please check your email to verify your account.",
-        variant: "default",
-      })
-      
-      navigate('/auth/login', { 
-        state: { 
-          message: 'Registration successful! Please check your email to verify your account before logging in.' 
-        } 
-      })
+        variant: "success",
+      });
+      navigate('/auth/verify-email');
     } catch (error: any) {
+      console.error('Registration error:', error);
       toast({
-        title: "Registration Failed",
-        description: error.message || "An error occurred during registration",
+        title: "Registration failed",
+        description: error.response?.data?.message || "An error occurred during registration. Please try again.",
         variant: "destructive",
-      })
+      });
+    } finally {
+      setIsSubmitting(false);
     }
-  }
+  };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-    >
-      <Box component="form" onSubmit={handleSubmit(onSubmit)} noValidate>
-        <Typography variant="h4" component="h1" gutterBottom textAlign="center">
-          Create Account
-        </Typography>
-        <Typography variant="body1" color="text.secondary" textAlign="center" sx={{ mb: 3 }}>
-          Join Smart Lib to access all features
-        </Typography>
-
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {error}
-          </Alert>
-        )}
-
-        <Stepper activeStep={activeStep} sx={{ mb: 4 }}>
-          {steps.map((label) => (
-            <Step key={label}>
-              <StepLabel>{label}</StepLabel>
-            </Step>
-          ))}
-        </Stepper>
-
-        {activeStep === 0 && (
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            <TextField
-              {...register('username')}
-              fullWidth
-              label="Username"
-              autoComplete="username"
-              error={!!errors.username}
-              helperText={errors.username?.message}
-              sx={{ mb: 2 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Person color="action" />
-                  </InputAdornment>
-                ),
-              }}
-            />
-
-            <TextField
-              {...register('email')}
-              fullWidth
-              label="Email Address"
-              type="email"
-              autoComplete="email"
-              error={!!errors.email}
-              helperText={errors.email?.message}
-              sx={{ mb: 2 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Email color="action" />
-                  </InputAdornment>
-                ),
-              }}
-            />
-
-            <TextField
-              {...register('password')}
-              fullWidth
-              label="Password"
-              type={showPassword ? 'text' : 'password'}
-              autoComplete="new-password"
-              error={!!errors.password}
-              helperText={errors.password?.message}
-              sx={{ mb: 2 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <LockOutlined color="action" />
-                  </InputAdornment>
-                ),
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton
-                      aria-label="toggle password visibility"
-                      onClick={() => setShowPassword(!showPassword)}
-                      edge="end"
-                    >
-                      {showPassword ? <VisibilityOff /> : <Visibility />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-            />
-
-            <TextField
-              {...register('password_confirm')}
-              fullWidth
-              label="Confirm Password"
-              type={showPassword ? 'text' : 'password'}
-              autoComplete="new-password"
-              error={!!errors.password_confirm}
-              helperText={errors.password_confirm?.message}
-              sx={{ mb: 3 }}
-            />
-          </motion.div>
-        )}
-
-        {activeStep === 1 && (
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  {...register('first_name')}
-                  fullWidth
-                  label="First Name"
-                  autoComplete="given-name"
-                  error={!!errors.first_name}
-                  helperText={errors.first_name?.message}
-                  sx={{ mb: 2 }}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Person color="action" />
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  {...register('last_name')}
-                  fullWidth
-                  label="Last Name"
-                  autoComplete="family-name"
-                  error={!!errors.last_name}
-                  helperText={errors.last_name?.message}
-                  sx={{ mb: 2 }}
-                />
-              </Grid>
-            </Grid>
-
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  {...register('phone_number')}
-                  fullWidth
-                  label="Phone Number"
-                  autoComplete="tel"
-                  error={!!errors.phone_number}
-                  helperText={errors.phone_number?.message}
-                  sx={{ mb: 2 }}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Phone color="action" />
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  {...register('date_of_birth')}
-                  fullWidth
-                  label="Date of Birth"
-                  type="date"
-                  InputLabelProps={{ shrink: true }}
-                  error={!!errors.date_of_birth}
-                  helperText={errors.date_of_birth?.message}
-                  sx={{ mb: 2 }}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Cake color="action" />
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-              </Grid>
-            </Grid>
-
-            <Controller
-              name="gender"
-              control={control}
-              render={({ field }) => (
-                <TextField
-                  {...field}
-                  select
-                  fullWidth
-                  label="Gender"
-                  error={!!errors.gender}
-                  helperText={errors.gender?.message}
-                  sx={{ mb: 2 }}
-                >
-                  <MenuItem value="M">Male</MenuItem>
-                  <MenuItem value="F">Female</MenuItem>
-                  <MenuItem value="O">Other</MenuItem>
-                </TextField>
-              )}
-            />
-
-            <TextField
-              {...register('address')}
-              fullWidth
-              label="Address"
-              autoComplete="street-address"
-              error={!!errors.address}
-              helperText={errors.address?.message}
-              sx={{ mb: 2 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Home color="action" />
-                  </InputAdornment>
-                ),
-              }}
-            />
-
-            <TextField
-              {...register('city')}
-              fullWidth
-              label="City"
-              autoComplete="address-level2"
-              error={!!errors.city}
-              helperText={errors.city?.message}
-              sx={{ mb: 3 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <LocationCity color="action" />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </motion.div>
-        )}
-
-        {activeStep === 2 && (
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            <Alert severity="info" sx={{ mb: 3 }}>
-              Please enter your ICAP CA Registration Number (CRN) in the format ICAP-CA-YYYY-####
-            </Alert>
-
-            <TextField
-              {...register('crn')}
-              fullWidth
-              label="ICAP CA Registration Number (CRN)"
-              placeholder="ICAP-CA-2023-1234"
-              error={!!errors.crn}
-              helperText={errors.crn?.message}
-              sx={{ mb: 3 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Badge color="action" />
-                  </InputAdornment>
-                ),
-              }}
-            />
-
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              By registering, you agree to the Smart Lib Terms of Service and Privacy Policy.
-            </Typography>
-          </motion.div>
-        )}
-
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
-          <Button
-            disabled={activeStep === 0}
-            onClick={handleBack}
-            variant="outlined"
-          >
-            Back
-          </Button>
+    <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Create an Account</CardTitle>
+          <CardDescription>Join Smart Lib to access our services</CardDescription>
+          <Stepper activeStep={activeStep} className="mt-4">
+            {steps.map((step, index) => (
+              <Step key={index} title={step.title} />
+            ))}
+          </Stepper>
+        </CardHeader>
+        
+        <form onSubmit={handleSubmit(onSubmit)}>
+          <CardContent className="space-y-4">
+            {/* Account Information */}
+            <div style={{ display: activeStep === 0 ? 'block' : 'none' }}>
+              <div className="space-y-2">
+                <Label htmlFor="username">Username</Label>
+                <Input id="username" {...register('username')} />
+                {errors.username && <p className="text-sm text-red-500">{errors.username.message}</p>}
+              </div>
+              
+              <div className="space-y-2 mt-4">
+                <Label htmlFor="email">Email</Label>
+                <Input id="email" type="email" {...register('email')} />
+                {errors.email && <p className="text-sm text-red-500">{errors.email.message}</p>}
+              </div>
+              
+              <div className="space-y-2 mt-4">
+                <Label htmlFor="password">Password</Label>
+                <Input id="password" type="password" {...register('password')} />
+                {errors.password && <p className="text-sm text-red-500">{errors.password.message}</p>}
+              </div>
+              
+              <div className="space-y-2 mt-4">
+                <Label htmlFor="password_confirm">Confirm Password</Label>
+                <Input id="password_confirm" type="password" {...register('password_confirm')} />
+                {errors.password_confirm && <p className="text-sm text-red-500">{errors.password_confirm.message}</p>}
+              </div>
+            </div>
+            
+            {/* Personal Details */}
+            <div style={{ display: activeStep === 1 ? 'block' : 'none' }}>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="first_name">First Name</Label>
+                  <Input id="first_name" {...register('first_name')} />
+                  {errors.first_name && <p className="text-sm text-red-500">{errors.first_name.message}</p>}
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="last_name">Last Name</Label>
+                  <Input id="last_name" {...register('last_name')} />
+                  {errors.last_name && <p className="text-sm text-red-500">{errors.last_name.message}</p>}
+                </div>
+              </div>
+              
+              <div className="space-y-2 mt-4">
+                <Label htmlFor="phone_number">Phone Number</Label>
+                <Input id="phone_number" {...register('phone_number')} placeholder="+923001234567" />
+                {errors.phone_number && <p className="text-sm text-red-500">{errors.phone_number.message}</p>}
+              </div>
+              
+              <div className="space-y-2 mt-4">
+                <Label htmlFor="date_of_birth">Date of Birth</Label>
+                <Input id="date_of_birth" type="date" {...register('date_of_birth')} />
+                {errors.date_of_birth && <p className="text-sm text-red-500">{errors.date_of_birth.message}</p>}
+              </div>
+              
+              <div className="space-y-2 mt-4">
+                <Label htmlFor="gender">Gender</Label>
+                <Select onValueChange={(value) => register('gender').onChange({ target: { value } })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select gender" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="M">Male</SelectItem>
+                    <SelectItem value="F">Female</SelectItem>
+                    <SelectItem value="O">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+                {errors.gender && <p className="text-sm text-red-500">{errors.gender.message}</p>}
+              </div>
+              
+              <div className="space-y-2 mt-4">
+                <Label htmlFor="address">Address</Label>
+                <Input id="address" {...register('address')} />
+                {errors.address && <p className="text-sm text-red-500">{errors.address.message}</p>}
+              </div>
+              
+              <div className="space-y-2 mt-4">
+                <Label htmlFor="city">City</Label>
+                <Input id="city" {...register('city')} />
+                {errors.city && <p className="text-sm text-red-500">{errors.city.message}</p>}
+              </div>
+            </div>
+            
+            {/* ICAP Information */}
+            <div style={{ display: activeStep === 2 ? 'block' : 'none' }}>
+              <div className="space-y-2">
+                <Label htmlFor="crn">ICAP CA Registration Number</Label>
+                <Input id="crn" {...register('crn')} placeholder="ICAP-CA-YYYY-NNNN" />
+                {errors.crn && <p className="text-sm text-red-500">{errors.crn.message}</p>}
+              </div>
+              
+              <div className="mt-4 p-4 bg-blue-50 rounded-md">
+                <p className="text-sm text-blue-700">
+                  By creating an account, you agree to our Terms of Service and Privacy Policy. 
+                  After registration, you'll receive an email with a verification link to activate your account.
+                </p>
+              </div>
+            </div>
+          </CardContent>
           
-          {activeStep === steps.length - 1 ? (
-            <Button
-              type="submit"
-              variant="contained"
-              disabled={isLoading}
-              startIcon={isLoading ? <LoadingSpinner size="sm" /> : null}
-            >
-              Register
-            </Button>
-          ) : (
-            <Button
-              variant="contained"
-              onClick={handleNext}
-              disabled={
-                (activeStep === 0 && !watchEmail)
-              }
-            >
-              Next
-            </Button>
-          )}
-        </Box>
+          <CardFooter className="flex justify-between">
+            {activeStep > 0 && (
+              <Button type="button" variant="outline" onClick={handleBack}>
+                Back
+              </Button>
+            )}
+            
+            {activeStep < steps.length - 1 ? (
+              <Button type="button" onClick={handleNext} className="ml-auto">
+                Next
+              </Button>
+            ) : (
+              <Button type="submit" disabled={isSubmitting} className="ml-auto">
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating Account...
+                  </>
+                ) : (
+                  'Create Account'
+                )}
+              </Button>
+            )}
+          </CardFooter>
+        </form>
+      </Card>
+    </div>
+  );
+};
 
-        <Box sx={{ textAlign: 'center', mt: 3 }}>
-          <Typography variant="body2" color="text.secondary">
-            Already have an account?{' '}
-            <Link
-              to="/auth/login"
-              style={{ textDecoration: 'none', color: 'inherit' }}
-            >
-              <Typography component="span" color="primary" sx={{ font: 'inherit' }}>
-                Sign in
-              </Typography>
-            </Link>
-          </Typography>
-        </Box>
-      </Box>
-    </motion.div>
-  )
-}
+export default RegisterPage;

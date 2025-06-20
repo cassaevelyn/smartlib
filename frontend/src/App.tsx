@@ -70,6 +70,9 @@ function App() {
         <Route path="register" element={<RegisterPage />} />
         <Route path="forgot-password" element={<ForgotPasswordPage />} />
         <Route path="verify-email/:token" element={<VerifyEmailPage />} />
+        <Route path="verify-email/manual" element={<VerifyEmailPage />} />
+        <Route path="verify-email/success" element={<VerifyEmailPage />} />
+        <Route path="verify-email/failed" element={<VerifyEmailPage />} />
       </Route>
 
       {/* Library Application Route - outside of main layout */}

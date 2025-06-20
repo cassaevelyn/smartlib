@@ -23,9 +23,9 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
     return <Navigate to="/auth/login" state={{ from: location }} replace />
   }
 
-  // Check if user is approved - if not, redirect to library application page
+  // Check if user is active - if not, redirect to library application page
   // Skip this check for the library application page itself to avoid infinite redirects
-  if (!user?.is_approved && !location.pathname.includes('/apply-for-library')) {
+  if (!user?.is_active && !location.pathname.includes('/apply-for-library')) {
     return <Navigate to="/apply-for-library" replace />
   }
 

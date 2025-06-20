@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   Box,
@@ -36,6 +36,7 @@ import { useAuthStore } from '../../stores/authStore'
 import { authService } from '../../services/authService'
 import { LoadingSpinner } from '../../components/ui/loading-spinner'
 import { isValidCRN } from '../../lib/utils'
+import { useToast } from '../../hooks/use-toast'
 
 const registerSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters'),
@@ -64,6 +65,7 @@ const steps = ['Account Information', 'Email Verification', 'Personal Details', 
 
 export function RegisterPage() {
   const navigate = useNavigate()
+  const { toast } = useToast()
   const { register: registerUser, isLoading, error, clearError } = useAuthStore()
   const [showPassword, setShowPassword] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
@@ -81,7 +83,7 @@ export function RegisterPage() {
   
   // OTP input fields
   const [otpDigits, setOtpDigits] = useState<string[]>(Array(6).fill(''))
-  const [otpRefs, setOtpRefs] = useState<(HTMLInputElement | null)[]>(Array(6).fill(null))
+  const otpRefs = useRef<(HTMLInputElement | null)[]>(Array(6).fill(null))
 
   const {
     register,
@@ -156,13 +158,24 @@ export function RegisterPage() {
       }
       
       await registerUser(registrationData)
+      
+      toast({
+        title: "Registration Successful",
+        description: "Your account has been created. You can now log in.",
+        variant: "default",
+      })
+      
       navigate('/auth/login', { 
         state: { 
           message: 'Registration successful! You can now log in.' 
         } 
       })
-    } catch (error) {
-      // Error is handled by the store
+    } catch (error: any) {
+      toast({
+        title: "Registration Failed",
+        description: error.message || "An error occurred during registration",
+        variant: "destructive",
+      })
     }
   }
 
@@ -173,10 +186,19 @@ export function RegisterPage() {
       setOtpSuccess(null)
       
       const email = getValues('email')
+      
+      // Validate email before sending OTP
+      const emailValid = await trigger('email')
+      if (!emailValid) {
+        setOtpError('Please enter a valid email address')
+        setSendingOtp(false)
+        return
+      }
+      
       const response = await authService.sendOtp(email)
       
       setOtpSent(true)
-      setOtpSuccess('OTP sent to your email. Please check your inbox.')
+      setOtpSuccess('OTP sent to your email. Please check your inbox and spam folders.')
       
       // Store the user ID returned from the backend
       if (response.user_id) {
@@ -202,6 +224,13 @@ export function RegisterPage() {
       }, 1000)
       
       setCooldownInterval(interval)
+      
+      // Focus on the first OTP input field
+      setTimeout(() => {
+        if (otpRefs.current[0]) {
+          otpRefs.current[0].focus()
+        }
+      }, 100)
     } catch (error: any) {
       setOtpError(error.message || 'Failed to send OTP')
     } finally {
@@ -217,6 +246,13 @@ export function RegisterPage() {
       
       const email = getValues('email')
       const otp = getValues('otp')
+      
+      // Validate OTP format
+      if (otp.length !== 6 || !/^\d+$/.test(otp)) {
+        setOtpError('OTP must be 6 digits')
+        setVerifyingOtp(false)
+        return
+      }
       
       const response = await authService.verifyOtp(email, otp)
       
@@ -240,8 +276,8 @@ export function RegisterPage() {
       setOtpDigits(Array(6).fill(''))
       
       // Focus on the first OTP input field
-      if (otpRefs[0]) {
-        otpRefs[0].focus()
+      if (otpRefs.current[0]) {
+        otpRefs.current[0].focus()
       }
     } finally {
       setVerifyingOtp(false)
@@ -263,8 +299,8 @@ export function RegisterPage() {
     setValue('otp', combinedOtp);
     
     // Move focus to the next input if a digit was entered
-    if (value && index < 5 && otpRefs[index + 1]) {
-      otpRefs[index + 1].focus();
+    if (value && index < 5 && otpRefs.current[index + 1]) {
+      otpRefs.current[index + 1].focus();
     }
     
     // If all digits are filled, verify OTP
@@ -276,8 +312,8 @@ export function RegisterPage() {
   // Handle key press in OTP input
   const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
     // Move to previous input on backspace if current input is empty
-    if (e.key === 'Backspace' && !otpDigits[index] && index > 0 && otpRefs[index - 1]) {
-      otpRefs[index - 1].focus();
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0 && otpRefs.current[index - 1]) {
+      otpRefs.current[index - 1].focus();
     }
   };
 
@@ -307,10 +343,10 @@ export function RegisterPage() {
     
     // Focus the next empty field or the last field if all are filled
     const nextEmptyIndex = newOtpDigits.findIndex(digit => !digit);
-    if (nextEmptyIndex !== -1 && otpRefs[nextEmptyIndex]) {
-      otpRefs[nextEmptyIndex].focus();
-    } else if (otpRefs[5]) {
-      otpRefs[5].focus();
+    if (nextEmptyIndex !== -1 && otpRefs.current[nextEmptyIndex]) {
+      otpRefs.current[nextEmptyIndex].focus();
+    } else if (otpRefs.current[5]) {
+      otpRefs.current[5].focus();
     }
     
     // If all digits are filled, verify OTP
@@ -451,7 +487,7 @@ export function RegisterPage() {
 
             <Box sx={{ mb: 3 }}>
               <Typography variant="body1" gutterBottom>
-                Email: {watchEmail}
+                Email: <strong>{watchEmail}</strong>
               </Typography>
               
               {!otpVerified && (
@@ -504,7 +540,7 @@ export function RegisterPage() {
                     <TextField
                       key={index}
                       inputRef={(el) => {
-                        otpRefs[index] = el;
+                        otpRefs.current[index] = el;
                       }}
                       value={otpDigits[index]}
                       onChange={(e) => handleOtpChange(index, e.target.value)}
@@ -526,6 +562,18 @@ export function RegisterPage() {
                     />
                   ))}
                 </Box>
+                {otpSent && !otpVerified && (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                    <Button
+                      variant="contained"
+                      onClick={handleVerifyOtp}
+                      disabled={verifyingOtp || getValues('otp').length !== 6}
+                      startIcon={verifyingOtp ? <LoadingSpinner size="sm" /> : <VerifiedUser />}
+                    >
+                      Verify OTP
+                    </Button>
+                  </Box>
+                )}
               </Box>
             )}
           </motion.div>
@@ -712,8 +760,9 @@ export function RegisterPage() {
               type="submit"
               variant="contained"
               disabled={isLoading}
+              startIcon={isLoading ? <LoadingSpinner size="sm" /> : null}
             >
-              {isLoading ? <LoadingSpinner size="sm" /> : 'Register'}
+              Register
             </Button>
           ) : (
             <Button

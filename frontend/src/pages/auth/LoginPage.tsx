@@ -10,6 +10,7 @@ import {
   IconButton,
   FormControlLabel,
   Checkbox,
+  Divider,
 } from '@mui/material'
 import { Visibility, VisibilityOff, Email, Lock } from '@mui/icons-material'
 import { motion } from 'framer-motion'
@@ -18,6 +19,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useAuthStore } from '../../stores/authStore'
 import { LoadingSpinner } from '../../components/ui/loading-spinner'
+import { useToast } from '../../hooks/use-toast'
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -30,6 +32,7 @@ type LoginForm = z.infer<typeof loginSchema>
 export function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { toast } = useToast()
   const { login, isLoading, error, clearError } = useAuthStore()
   const [showPassword, setShowPassword] = useState(false)
 
@@ -52,12 +55,21 @@ export function LoginPage() {
     try {
       clearError()
       
-      console.log('Login attempt with:', { email: data.email })
       await login({ email: data.email, password: data.password })
+      
+      toast({
+        title: "Login Successful",
+        description: "Welcome back to Smart Lib!",
+        variant: "default",
+      })
+      
       navigate(from, { replace: true })
     } catch (error: any) {
-      console.log('Login error:', error)
-      // Error is handled by the store
+      toast({
+        title: "Login Failed",
+        description: error.message || "Invalid credentials. Please try again.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -160,6 +172,12 @@ export function LoginPage() {
         >
           {isLoading ? <LoadingSpinner size="sm" /> : 'Sign In'}
         </Button>
+
+        <Divider sx={{ my: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            OR
+          </Typography>
+        </Divider>
 
         <Box sx={{ textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary">

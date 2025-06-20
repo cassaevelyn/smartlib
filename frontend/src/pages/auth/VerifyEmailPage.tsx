@@ -5,19 +5,24 @@ import {
   Typography,
   Button,
   Alert,
-  CircularProgress,
   Paper,
+  TextField,
+  CircularProgress,
 } from '@mui/material'
-import { CheckCircle, Error as ErrorIcon } from '@mui/icons-material'
+import { CheckCircle, Error as ErrorIcon, Email } from '@mui/icons-material'
 import { motion } from 'framer-motion'
 import { authService } from '../../services/authService'
+import { useToast } from '../../hooks/use-toast'
 
 export function VerifyEmailPage() {
   const { token } = useParams<{ token: string }>()
   const navigate = useNavigate()
+  const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(true)
   const [isVerified, setIsVerified] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [email, setEmail] = useState<string>('')
+  const [isResending, setIsResending] = useState(false)
 
   useEffect(() => {
     if (!token) {
@@ -32,22 +37,64 @@ export function VerifyEmailPage() {
         const response = await authService.verifyEmail(token)
         setIsVerified(true)
         setError(null)
+        
+        toast({
+          title: "Email Verified",
+          description: "Your email has been verified successfully.",
+          variant: "default",
+        })
       } catch (error: any) {
-        setError(error.message || 'Failed to verify email')
+        setError(error.message || 'Failed to verify email. The token may be invalid or expired.')
         setIsVerified(false)
+        
+        toast({
+          title: "Verification Failed",
+          description: error.message || 'Failed to verify email',
+          variant: "destructive",
+        })
       } finally {
         setIsLoading(false)
       }
     }
 
     verifyEmail()
-  }, [token])
+  }, [token, toast])
 
   const handleResendVerification = async () => {
-    // This would be implemented if we had the user's email available here
-    // Since we don't have it in this context, we'll redirect to login page
-    // where they can use the resend functionality
-    navigate('/auth/login')
+    if (!email) {
+      toast({
+        title: "Email Required",
+        description: "Please enter your email address",
+        variant: "destructive",
+      })
+      return
+    }
+    
+    try {
+      setIsResending(true)
+      const response = await authService.sendOtp(email)
+      
+      toast({
+        title: "Verification Email Sent",
+        description: "A new verification code has been sent to your email",
+        variant: "default",
+      })
+      
+      // Redirect to login page with a message
+      navigate('/auth/login', { 
+        state: { 
+          message: 'A new verification code has been sent to your email. Please check your inbox and spam folders.' 
+        } 
+      })
+    } catch (error: any) {
+      toast({
+        title: "Failed to Send Verification",
+        description: error.message || 'Failed to send verification email',
+        variant: "destructive",
+      })
+    } finally {
+      setIsResending(false)
+    }
   }
 
   return (
@@ -109,20 +156,46 @@ export function VerifyEmailPage() {
               <Typography variant="body1" paragraph>
                 Please try again or request a new verification email.
               </Typography>
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <Button
-                  variant="outlined"
-                  onClick={() => navigate('/auth/login')}
-                >
-                  Go to Login
-                </Button>
-                <Button
-                  variant="contained"
-                  onClick={handleResendVerification}
-                >
+              
+              <Paper elevation={3} sx={{ p: 3, width: '100%', maxWidth: 400, mt: 2 }}>
+                <Typography variant="h6" gutterBottom>
                   Request New Verification
-                </Button>
-              </Box>
+                </Typography>
+                <TextField
+                  fullWidth
+                  label="Email Address"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  margin="normal"
+                  required
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <Email color="action" />
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+                <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+                  <Button
+                    variant="outlined"
+                    onClick={() => navigate('/auth/login')}
+                    fullWidth
+                  >
+                    Go to Login
+                  </Button>
+                  <Button
+                    variant="contained"
+                    onClick={handleResendVerification}
+                    disabled={isResending || !email}
+                    fullWidth
+                    startIcon={isResending ? <CircularProgress size={20} /> : null}
+                  >
+                    {isResending ? 'Sending...' : 'Send Verification'}
+                  </Button>
+                </Box>
+              </Paper>
             </Box>
           </motion.div>
         )}

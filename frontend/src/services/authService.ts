@@ -13,6 +13,18 @@ export interface RegisterResponse {
   user_id: string
 }
 
+export interface OtpResponse {
+  message: string
+  attempts_remaining: number
+  cooldown_minutes: number
+  user_id: string
+}
+
+export interface VerifyOtpResponse {
+  message: string
+  user_id: string
+}
+
 export const authService = {
   login: async (credentials: LoginForm): Promise<LoginResponse> => {
     try {
@@ -111,17 +123,17 @@ export const authService = {
     }
   },
 
-  sendOtp: async (email: string): Promise<{ message: string, attempts_remaining: number, cooldown_minutes: number, user_id: string }> => {
+  sendOtp: async (email: string): Promise<OtpResponse> => {
     try {
-      return await apiPost<{ message: string, attempts_remaining: number, cooldown_minutes: number, user_id: string }>('/auth/send-otp/', { email })
+      return await apiPost<OtpResponse>('/auth/send-otp/', { email })
     } catch (error) {
       throw handleApiError(error)
     }
   },
 
-  verifyOtp: async (email: string, otp: string): Promise<{ message: string, user_id: string }> => {
+  verifyOtp: async (email: string, otp: string): Promise<VerifyOtpResponse> => {
     try {
-      return await apiPost<{ message: string, user_id: string }>('/auth/verify-otp/', { email, otp })
+      return await apiPost<VerifyOtpResponse>('/auth/verify-otp/', { email, otp })
     } catch (error) {
       throw handleApiError(error)
     }

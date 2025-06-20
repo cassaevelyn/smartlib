@@ -68,6 +68,7 @@ export function RegisterPage() {
   const [activeStep, setActiveStep] = useState(0)
 
   const {
+    register,
     control,
     handleSubmit,
     watch,

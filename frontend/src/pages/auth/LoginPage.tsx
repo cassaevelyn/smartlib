@@ -20,6 +20,7 @@ import { z } from 'zod'
 import { useAuthStore } from '../../stores/authStore'
 import { LoadingSpinner } from '../../components/ui/loading-spinner'
 import { useToast } from '../../hooks/use-toast'
+import { authService } from '../../services/authService'
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),

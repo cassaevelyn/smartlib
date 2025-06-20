@@ -56,31 +56,57 @@ def cleanup_expired_verifications():
 
 
 @shared_task
-def send_otp_email(user_id, otp_code):
-    """Send OTP email to user"""
+def send_account_activation_email(user_id, token, code):
+    """Send account activation email to user"""
     try:
         user = User.objects.get(id=user_id)
         
-        subject = 'Smart Lib - Email Verification OTP'
+        verification_url = f"{settings.FRONTEND_URL}/auth/verify-email/{token}"
+        
+        subject = 'Smart Lib - Verify Your Email Address'
         message = f'''
         Dear {user.get_full_name()},
         
-        Your verification code for Smart Lib is: {otp_code}
+        Thank you for registering with Smart Lib! Please verify your email address to activate your account.
         
-        This code will expire in 5 minutes.
+        Verification Link: {verification_url}
+        
+        If you prefer to enter the code manually, use this verification code: {code}
+        
+        This verification link and code will expire in 24 hours.
+        
+        Your Student ID: {user.student_id}
+        Your CRN: {user.crn}
         
         Best regards,
         Smart Lib Team
         '''
         
         html_message = f'''
-        <h2>Email Verification</h2>
+        <h2>Welcome to Smart Lib!</h2>
         <p>Dear {user.get_full_name()},</p>
-        <p>Your verification code for Smart Lib is:</p>
-        <div style="background-color: #f5f5f5; padding: 15px; font-size: 24px; font-weight: bold; text-align: center; letter-spacing: 5px; margin: 20px 0;">
-            {otp_code}
+        <p>Thank you for registering with Smart Lib! Please verify your email address to activate your account.</p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{verification_url}" style="background-color: #4CAF50; color: white; padding: 15px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">Verify Email Address</a>
         </div>
-        <p>This code will expire in 5 minutes.</p>
+        
+        <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+        <p><a href="{verification_url}">{verification_url}</a></p>
+        
+        <p>Or if you prefer to enter the code manually, use this verification code:</p>
+        <div style="background-color: #f5f5f5; padding: 15px; font-size: 24px; font-weight: bold; text-align: center; letter-spacing: 5px; margin: 20px 0;">
+            {code}
+        </div>
+        
+        <p>This verification link and code will expire in 24 hours.</p>
+        
+        <p><strong>Your Account Information:</strong></p>
+        <ul>
+            <li>Student ID: {user.student_id}</li>
+            <li>CRN: {user.crn}</li>
+        </ul>
+        
         <p>Best regards,<br>Smart Lib Team</p>
         '''
         
@@ -93,14 +119,14 @@ def send_otp_email(user_id, otp_code):
             fail_silently=False,
         )
         
-        logger.info(f"OTP email sent to {user.email}")
-        return f"OTP email sent to {user.email}"
+        logger.info(f"Account activation email sent to {user.email}")
+        return f"Account activation email sent to {user.email}"
         
     except User.DoesNotExist:
         logger.error(f"User with ID {user_id} not found")
         return f"User with ID {user_id} not found"
     except Exception as e:
-        logger.error(f"Error sending OTP email: {e}")
+        logger.error(f"Error sending account activation email: {e}")
         return f"Error: {e}"
 
 

@@ -18,12 +18,11 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     """Serializer for user registration"""
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password_confirm = serializers.CharField(write_only=True)
-    id = serializers.UUIDField(required=False)  # Optional field to update existing user
     
     class Meta:
         model = User
         fields = [
-            'id', 'username', 'email', 'password', 'password_confirm',
+            'username', 'email', 'password', 'password_confirm',
             'first_name', 'last_name', 'crn', 'phone_number',
             'date_of_birth', 'gender', 'address', 'city'
         ]
@@ -43,35 +42,18 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return attrs
     
     def create(self, validated_data):
-        """Create new user or update existing temporary user"""
+        """Create new user"""
         validated_data.pop('password_confirm')
         password = validated_data.pop('password')
         
-        # Check if we're updating an existing user (from OTP verification)
-        user_id = validated_data.pop('id', None)
-        
-        if user_id:
-            # Update existing user - if user doesn't exist, this will raise User.DoesNotExist
-            # which will be caught by the view and returned as a 404
-            user = User.objects.get(id=user_id)
-            
-            # Update user fields
-            for attr, value in validated_data.items():
-                setattr(user, attr, value)
-            
-            user.set_password(password)
-            user.is_active = True  # Activate the user now that registration is complete
-            user.save()
-            
-            return user
-        
-        # Create new user
+        # Create new user with is_active=False (will be activated after email verification)
         user = User.objects.create_user(
             password=password,
+            is_active=False,  # User will be inactive until email verification
             **validated_data
         )
         
-        # UserProfile is now created by the post_save signal in signals.py
+        # UserProfile is created by the post_save signal in signals.py
         
         return user
 
@@ -97,9 +79,20 @@ class UserLoginSerializer(serializers.Serializer):
                 raise serializers.ValidationError('Invalid credentials')
             
             if not user.is_active:
+                # Check if the user exists but is not active (email not verified)
+                try:
+                    inactive_user = User.objects.get(email=email, is_active=False)
+                    if inactive_user:
+                        # This is a special error that will be caught by the view
+                        # to trigger the email verification resend process
+                        raise serializers.ValidationError(
+                            'Account not active. Please verify your email.',
+                            code='account_not_active'
+                        )
+                except User.DoesNotExist:
+                    pass
+                
                 raise serializers.ValidationError('Account is deactivated')
-            
-            # Removed the is_verified check to allow login for unverified users
             
             attrs['user'] = user
             return attrs
@@ -108,43 +101,30 @@ class UserLoginSerializer(serializers.Serializer):
 
 
 class SendOtpSerializer(serializers.Serializer):
-    """Serializer for sending OTP"""
+    """Serializer for sending account activation email"""
     email = serializers.EmailField()
     
     def validate_email(self, value):
-        """Validate email exists or create temporary user"""
+        """Validate email exists"""
         try:
             # Try to find an existing user
             user = User.objects.get(email=value)
             
-            # If user is already verified, raise an error
-            if user.is_verified:
-                raise serializers.ValidationError('An account with this email already exists and is verified. Please login instead.')
+            # If user is already verified and active, raise an error
+            if user.is_verified and user.is_active:
+                raise serializers.ValidationError('Your account is already verified. Please login instead.')
             
-            # If user exists but is not verified, we'll use this user for OTP
+            # If user exists but is not verified, we'll use this user for activation
             self.context['user'] = user
             
         except User.DoesNotExist:
-            # Create a temporary user for OTP verification
-            import uuid
-            temp_username = f"temp_{uuid.uuid4().hex[:8]}"
-            
-            user = User.objects.create(
-                username=temp_username,
-                email=value,
-                is_active=False,  # Ensure the user is not active until registration is complete
-                is_verified=False,
-                # Set a random password that won't be used
-                password=f"pbkdf2_sha256${uuid.uuid4().hex}"
-            )
-            
-            self.context['user'] = user
-            
-        # Check for existing OTP verification
+            raise serializers.ValidationError('No account found with this email address.')
+        
+        # Check for existing verification
         try:
             verification = UserVerification.objects.get(
                 user=user,
-                verification_type='OTP',
+                verification_type='ACCOUNT_ACTIVATION',
                 is_verified=False
             )
             
@@ -153,7 +133,7 @@ class SendOtpSerializer(serializers.Serializer):
                 # Check if last attempt was within the last hour
                 one_hour_ago = timezone.now() - timezone.timedelta(hours=1)
                 if verification.last_resend_attempt and verification.last_resend_attempt > one_hour_ago and verification.attempts >= 5:
-                    raise serializers.ValidationError('Too many OTP attempts. Please try again after 1 hour.')
+                    raise serializers.ValidationError('Too many verification attempts. Please try again after 1 hour.')
             
             self.context['verification'] = verification
         except UserVerification.DoesNotExist:
@@ -179,38 +159,38 @@ class VerifyOtpSerializer(serializers.Serializer):
             try:
                 verification = UserVerification.objects.get(
                     user=user,
-                    verification_type='OTP',
+                    verification_type='ACCOUNT_ACTIVATION',
                     code=otp,
                     is_verified=False
                 )
                 
                 if verification.is_expired():
-                    raise serializers.ValidationError('OTP has expired. Please request a new one.')
+                    raise serializers.ValidationError('Verification code has expired. Please request a new one.')
                 
                 if not verification.can_attempt():
-                    raise serializers.ValidationError('Maximum OTP attempts exceeded. Please request a new OTP.')
+                    raise serializers.ValidationError('Maximum verification attempts exceeded. Please request a new code.')
                 
                 self.context['user'] = user
                 self.context['verification'] = verification
                 return attrs
                 
             except UserVerification.DoesNotExist:
-                # Increment attempts for any existing OTP verification
+                # Increment attempts for any existing verification
                 try:
                     existing_verification = UserVerification.objects.get(
                         user=user,
-                        verification_type='OTP',
+                        verification_type='ACCOUNT_ACTIVATION',
                         is_verified=False
                     )
                     existing_verification.attempts += 1
                     existing_verification.save()
                     
                     if not existing_verification.can_attempt():
-                        raise serializers.ValidationError('Maximum OTP attempts exceeded. Please request a new OTP.')
+                        raise serializers.ValidationError('Maximum verification attempts exceeded. Please request a new code.')
                 except UserVerification.DoesNotExist:
                     pass
                 
-                raise serializers.ValidationError('Invalid OTP. Please try again.')
+                raise serializers.ValidationError('Invalid verification code. Please try again.')
                 
         except User.DoesNotExist:
             raise serializers.ValidationError('No account found with this email')

@@ -1,8 +1,8 @@
 """
 User models for Smart Lib
 """
-from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.contrib.auth.models import AbstractUser
 from django.core.validators import RegexValidator
 from apps.core.models import BaseModel, TimeStampedModel
 from apps.core.utils import generate_unique_code, hash_sensitive_data
@@ -102,6 +102,11 @@ class User(AbstractUser):
     def save(self, *args, **kwargs):
         if not self.student_id:
             self.student_id = generate_unique_code('SL', 6)
+        
+        # Set is_active to False for new users until email verification
+        if not self.pk:
+            self.is_active = False
+            
         super().save(*args, **kwargs)
     
     @property

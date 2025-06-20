@@ -4,10 +4,13 @@ Views for accounts app
 from rest_framework import generics, status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import login, logout
 from django.utils import timezone
 from django.db import transaction
+from django.shortcuts import redirect
+from django.conf import settings
 from apps.core.permissions import IsOwnerOrReadOnly, IsAdminUser, IsSuperAdminUser
 from apps.core.utils import get_user_ip, send_notification_email, generate_secure_token, generate_numeric_otp
 from apps.core.models import ActivityLog
@@ -24,7 +27,7 @@ from .serializers import (
     SendOtpSerializer, VerifyOtpSerializer
 )
 from datetime import timedelta
-from .tasks import send_welcome_email, send_otp_email
+from .tasks import send_welcome_email, send_account_activation_email
 
 
 class UserRegistrationView(generics.CreateAPIView):
@@ -40,11 +43,39 @@ class UserRegistrationView(generics.CreateAPIView):
         with transaction.atomic():
             user = serializer.save()
             
-            # Send welcome email
-            send_welcome_email.delay(str(user.id))
+            # Create verification token and code
+            token = generate_secure_token()
+            code = generate_numeric_otp(6)
+            
+            # Create verification record
+            verification = UserVerification.objects.create(
+                user=user,
+                verification_type='ACCOUNT_ACTIVATION',
+                token=token,
+                code=code,
+                expires_at=timezone.now() + timedelta(hours=24),
+                attempts=0
+            )
+            
+            # Send activation email
+            send_account_activation_email.delay(
+                str(user.id), 
+                token, 
+                code
+            )
+            
+            # Log activity
+            ActivityLog.objects.create(
+                user=user,
+                activity_type='PROFILE_UPDATE',
+                description='User registered and verification email sent',
+                metadata={
+                    'verification_type': 'ACCOUNT_ACTIVATION',
+                }
+            )
         
         return Response({
-            'message': 'Registration successful. Please verify your email with the OTP.',
+            'message': 'Registration successful. Please check your email to verify your account.',
             'user_id': user.id
         }, status=status.HTTP_201_CREATED)
 
@@ -54,7 +85,68 @@ class UserRegistrationView(generics.CreateAPIView):
 def login_view(request):
     """User login endpoint"""
     serializer = UserLoginSerializer(data=request.data, context={'request': request})
-    serializer.is_valid(raise_exception=True)
+    
+    try:
+        serializer.is_valid(raise_exception=True)
+    except serializers.ValidationError as e:
+        # Check if this is the special 'account_not_active' error
+        if e.get_codes() == {'non_field_errors': ['account_not_active']}:
+            # Get the user by email
+            try:
+                user = User.objects.get(email=request.data.get('email'))
+                
+                # Generate a new verification token and code
+                token = generate_secure_token()
+                code = generate_numeric_otp(6)
+                
+                # Create or update verification record
+                verification, created = UserVerification.objects.get_or_create(
+                    user=user,
+                    verification_type='ACCOUNT_ACTIVATION',
+                    is_verified=False,
+                    defaults={
+                        'token': token,
+                        'code': code,
+                        'expires_at': timezone.now() + timedelta(hours=24),
+                        'attempts': 0
+                    }
+                )
+                
+                if not created:
+                    # Update existing verification
+                    verification.token = token
+                    verification.code = code
+                    verification.expires_at = timezone.now() + timedelta(hours=24)
+                    verification.attempts = 0
+                    verification.save()
+                
+                # Send activation email
+                send_account_activation_email.delay(
+                    str(user.id), 
+                    token, 
+                    code
+                )
+                
+                # Log activity
+                ActivityLog.objects.create(
+                    user=user,
+                    activity_type='PROFILE_UPDATE',
+                    description='Account activation email resent during login attempt',
+                    metadata={
+                        'verification_type': 'ACCOUNT_ACTIVATION',
+                    }
+                )
+                
+                return Response({
+                    'message': 'Your account is not active. A verification email has been sent to your email address.',
+                    'code': 'account_not_active'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            except User.DoesNotExist:
+                pass
+        
+        # For other validation errors, just raise them
+        raise e
     
     user = serializer.validated_data['user']
     
@@ -126,7 +218,7 @@ def logout_view(request):
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def send_otp_view(request):
-    """Send OTP for email verification"""
+    """Send OTP for account activation"""
     serializer = SendOtpSerializer(data=request.data, context={'request': request})
     serializer.is_valid(raise_exception=True)
     
@@ -135,22 +227,25 @@ def send_otp_view(request):
     
     # If verification doesn't exist, create a new one
     if not verification:
-        # Generate a 6-digit OTP
+        # Generate a token and 6-digit OTP
+        token = generate_secure_token()
         otp_code = generate_numeric_otp(6)
         
         verification = UserVerification.objects.create(
             user=user,
-            verification_type='OTP',
-            token=generate_secure_token(),  # Still generate a token for security
+            verification_type='ACCOUNT_ACTIVATION',
+            token=token,
             code=otp_code,
-            expires_at=timezone.now() + timedelta(minutes=5),  # OTP expires in 5 minutes
+            expires_at=timezone.now() + timedelta(hours=24),  # Expires in 24 hours
             attempts=0
         )
     else:
-        # Generate a new OTP code
+        # Generate a new token and OTP code
+        token = generate_secure_token()
         otp_code = generate_numeric_otp(6)
+        verification.token = token
         verification.code = otp_code
-        verification.expires_at = timezone.now() + timedelta(minutes=5)
+        verification.expires_at = timezone.now() + timedelta(hours=24)
         verification.save()
     
     # Update verification attempts and last resend time
@@ -158,16 +253,16 @@ def send_otp_view(request):
     verification.last_resend_attempt = timezone.now()
     verification.save()
     
-    # Send OTP email
-    send_otp_email.delay(str(user.id), otp_code)
+    # Send activation email
+    send_account_activation_email.delay(str(user.id), token, otp_code)
     
     # Calculate cooldown for next attempt
     cooldown = 1  # Default 1 minute
     if verification.attempts > 1:
-        cooldown = min(verification.attempts * 2, 10)  # Increase cooldown with each attempt, max 10 minutes
+        cooldown = min(verification.attempts * 2, 60)  # Increase cooldown with each attempt, max 60 minutes
     
     return Response({
-        'message': 'OTP sent to your email.',
+        'message': 'Verification email sent. Please check your inbox and spam folders.',
         'attempts_remaining': max(0, 5 - verification.attempts),
         'cooldown_minutes': cooldown,
         'user_id': str(user.id)  # Return the user ID to the frontend
@@ -177,7 +272,7 @@ def send_otp_view(request):
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def verify_otp_view(request):
-    """Verify OTP for email verification"""
+    """Verify OTP for account activation"""
     serializer = VerifyOtpSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     
@@ -189,13 +284,68 @@ def verify_otp_view(request):
     
     # Update user status
     user.is_verified = True
-    # Don't set is_active=True here, wait until final registration step
+    user.is_active = True  # Activate the user
     user.save()
     
+    # Log activity
+    ActivityLog.objects.create(
+        user=user,
+        activity_type='PROFILE_UPDATE',
+        description='Email verified and account activated',
+        metadata={
+            'verification_type': 'ACCOUNT_ACTIVATION',
+        }
+    )
+    
     return Response({
-        'message': 'Email verified successfully.',
+        'message': 'Email verified successfully. You can now log in.',
         'user_id': str(user.id)
     })
+
+
+class EmailVerificationConfirmView(APIView):
+    """View to handle email verification from link"""
+    permission_classes = [permissions.AllowAny]
+    
+    def get(self, request, token):
+        try:
+            # Find the verification record
+            verification = UserVerification.objects.get(
+                token=token,
+                verification_type='ACCOUNT_ACTIVATION',
+                is_verified=False
+            )
+            
+            # Check if token is expired
+            if verification.is_expired():
+                # Redirect to frontend with error message
+                return redirect(f"{settings.FRONTEND_URL}/auth/verify-email/failed?reason=expired")
+            
+            # Mark verification as verified
+            verification.verify()
+            
+            # Update user status
+            user = verification.user
+            user.is_verified = True
+            user.is_active = True  # Activate the user
+            user.save()
+            
+            # Log activity
+            ActivityLog.objects.create(
+                user=user,
+                activity_type='PROFILE_UPDATE',
+                description='Email verified and account activated via link',
+                metadata={
+                    'verification_type': 'ACCOUNT_ACTIVATION',
+                }
+            )
+            
+            # Redirect to frontend with success message
+            return redirect(f"{settings.FRONTEND_URL}/auth/verify-email/success")
+            
+        except UserVerification.DoesNotExist:
+            # Redirect to frontend with error message
+            return redirect(f"{settings.FRONTEND_URL}/auth/verify-email/failed?reason=invalid")
 
 
 class UserProfileView(generics.RetrieveUpdateAPIView):

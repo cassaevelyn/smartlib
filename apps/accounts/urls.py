@@ -14,6 +14,7 @@ urlpatterns = [
     path('logout/', views.logout_view, name='logout'),
     path('send-otp/', views.send_otp_view, name='send-otp'),
     path('verify-otp/', views.verify_otp_view, name='verify-otp'),
+    path('verify-email/<str:token>/', views.EmailVerificationConfirmView.as_view(), name='verify-email'),
     
     # Password Management
     path('password/change/', views.PasswordChangeView.as_view(), name='password-change'),

@@ -141,7 +141,7 @@ export const authService = {
 
   verifyEmail: async (token: string): Promise<{ message: string }> => {
     try {
-      return await apiPost<{ message: string }>('/auth/verify-email/', { token })
+      return await apiGet<{ message: string }>(`/auth/verify-email/${token}/`)
     } catch (error) {
       throw handleApiError(error)
     }

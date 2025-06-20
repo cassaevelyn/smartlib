@@ -49,7 +49,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         # Create new user with is_active=False (will be activated after email verification)
         user = User.objects.create_user(
             password=password,
-            is_active=False,  # User will be inactive until email verification
             **validated_data
         )
         
